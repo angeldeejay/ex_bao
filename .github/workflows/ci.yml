@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that needs no server: formatting, linting, types, docs and the
+  # unit suite. Fast, and the one job whose failure means "this would not work
+  # anywhere".
+  check:
+    name: Format, lint and unit tests
+    runs-on: ubuntu-latest
+
+    # The toolchain the job declares, rather than one an action installs for
+    # it. `erlef/setup-beam` decides what to download from `ImageOS` — a
+    # variable the hosted image happens to define — so a job that moves
+    # anywhere else quietly resolves a different compiler. Running this
+    # workflow under `act` showed exactly that: it picked the ubuntu-20.04
+    # channel, whose OTP 28 is linked against libcrypto 1.1 and cannot load
+    # its crypto NIF. An image the job names costs nothing to be sure of.
+    #
+    # Same tag as uruvium's, which is what consumes this library: one
+    # toolchain, and every place that names it says the same thing.
+    container:
+      image: hexpm/elixir:1.20.4-erlang-29.0.6-debian-trixie-20260824-slim
+
+    steps:
+      # Before the checkout, because `actions/checkout` uses git when the
+      # image has one — and the slim image does not.
+      - name: What the image does not carry
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git
+          rm -rf /var/lib/apt/lists/*
+          mix local.hex --force
+          mix local.rebar --force
+
+      # v7/v6 rather than the v5 that merely silences the Node 20 notice.
+      - uses: actions/checkout@v7
+
+      - name: Cache deps and build
+        uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - run: mix deps.get
+
+      # The PLT is expensive to build and changes only with the dependencies
+      # or the compiler, so it gets a cache of its own rather than riding on
+      # the build one.
+      - name: Cache Dialyzer PLT
+        uses: actions/cache@v6
+        with:
+          path: priv/plts
+          key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-plt-
+
+      # format, deps.unlock --check-unused, compile --warnings-as-errors,
+      # credo --strict, dialyzer, and the unit suite.
+      - name: Gates
+        run: mix check
+
+      # Built here and not only at release time: a broken reference or a
+      # malformed doc block is a compile-time problem, and finding it while
+      # publishing is finding it too late.
+      - run: mix docs
+
+  # The compatibility matrix. One job per supported OpenBao series, running
+  # the same suite against that exact server — which is why a green cell means
+  # something a specification diff cannot mean.
+  integration:
+    name: OpenBao ${{ matrix.bao }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Every version runs even when one fails: the point is the table, and a
+      # table that stops at the first red cell is not a table.
+      fail-fast: false
+      matrix:
+        bao: ["2.6.2", "2.5.5", "2.4.4"]
+
+    container:
+      image: hexpm/elixir:1.20.4-erlang-29.0.6-debian-trixie-20260824-slim
+
+    # The server as a service rather than started by Testcontainers. Inside a
+    # job container there is no Docker socket to reach, and mounting the
+    # host's would make every OpenBao a sibling whose published ports this
+    # container cannot see. A service is on the job's own network, reachable
+    # by name.
+    #
+    # No command is passed because none is needed: the image's own CMD is
+    # `server -dev -dev-no-store-token`, which is what the suite wants — and
+    # `services` has no way to pass one anyway.
+    services:
+      openbao:
+        image: openbao/openbao:${{ matrix.bao }}
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: ci-root
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "wget -q -O- http://127.0.0.1:8200/v1/sys/health || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      # Which makes the suite skip Testcontainers entirely. That path stays
+      # for local development, where there is a socket and no service network.
+      BAO_TEST_ADDR: http://openbao:8200
+      BAO_TEST_TOKEN: ci-root
+
+    steps:
+      - name: What the image does not carry
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git
+          rm -rf /var/lib/apt/lists/*
+          mix local.hex --force
+          mix local.rebar --force
+
+      - uses: actions/checkout@v7
+
+      - name: Cache deps and build
+        uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-int-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-int-
+
+      - run: mix deps.get
+
+      # Coverage comes from the newest version only: running it on every
+      # version would measure the same lines three times and publish whichever
+      # finished last.
+      - name: Integration suite
+        run: ${{ matrix.bao == '2.6.2' && 'mix coveralls.all' || 'mix test.all' }}
+
+      # The other half of the pair: the suite says what broke, this says what
+      # changed. Kept per version so a diff between releases is something to
+      # look at rather than reconstruct.
+      - name: Capture the server's OpenAPI specification
+        if: always()
+        env:
+          BAO_TOKEN: ci-root
+        run: mix bao.openapi --addr http://openbao:8200 --out priv/openapi/${{ matrix.bao }}.json
+
+      # v7, not the v5 that still runs on Node 20 -- raising it one major was
+      # not enough. Its breaking changes are an opt-in `archive: false` for
+      # single files and an internal move to ESM; neither reaches a step that
+      # uploads one JSON file under a name.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: openapi-${{ matrix.bao }}
+          path: priv/openapi/${{ matrix.bao }}.json
+          if-no-files-found: warn

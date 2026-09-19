@@ -1,0 +1,32 @@
+# The test runner: Elixir on Linux, with a Docker client but no daemon.
+#
+# It exists because Testcontainers needs a Unix socket and Docker Desktop on
+# Windows only offers a named pipe. Rather than opening the daemon on TCP --
+# which exposes it without TLS to anything on the machine -- the suite moves
+# to where the socket is.
+#
+# The daemon stays on the host: the socket is mounted in. Containers this
+# suite starts are therefore SIBLINGS of this one, not children, which is why
+# it needs TESTCONTAINERS_HOST_OVERRIDE to know how to reach them.
+ARG ELIXIR_VERSION=1.20-alpine
+FROM elixir:${ELIXIR_VERSION}
+
+# `docker-cli` only. No daemon in here: one is already running on the host and
+# a second would be a second, not a shortcut.
+RUN apk add --no-cache docker-cli git build-base curl \
+    && mix local.hex --force \
+    && mix local.rebar --force
+
+WORKDIR /app
+
+# Dependencies are a layer of their own, so editing a source file does not
+# refetch Hex.
+COPY mix.exs mix.lock* ./
+RUN mix deps.get && mix deps.compile
+
+# `deps.get` on every run, not just at build time: dependencies live in a
+# named volume so the image is not rebuilt for a code change, and that volume
+# goes stale the moment mix.exs gains a dependency. Fetching is a no-op when
+# nothing changed, and the alternative is a confusing "not available" error
+# that is fixed by a command nobody remembers.
+CMD ["sh", "-c", "mix deps.get && mix test.all"]

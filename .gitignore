@@ -1,0 +1,19 @@
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+ex_bao-*.tar
+/tmp/
+
+# Coverage
+/cover/
+
+# Editors
+.elixir_ls/
+.elixir-tools/
+
+# Dialyzer PLT, cached in CI
+/priv/plts/

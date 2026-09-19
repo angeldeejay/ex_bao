@@ -1,0 +1,107 @@
+name: Release
+
+# A tag, not a push to master. Publishing to Hex is irreversible after
+# twenty-four hours: a version cannot be replaced, only retired, and a retired
+# version still exists. Something that permanent should be an act, not a
+# side effect of merging.
+#
+# `workflow_dispatch` is here for the case where the tag exists but the run
+# failed for a reason that has nothing to do with the code.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to Hex
+    runs-on: ubuntu-latest
+
+    # A GitHub environment, so the publish waits for whoever is listed as a
+    # reviewer on it. The whole job is otherwise unattended and its last step
+    # cannot be undone; a human saying yes once is cheap insurance.
+    #
+    # Configure the reviewers in Settings > Environments > hex. With none
+    # configured it simply runs, so this is safe to have before that is set
+    # up -- it just does nothing until it is.
+    environment: hex
+
+    container:
+      image: hexpm/elixir:1.20.4-erlang-29.0.6-debian-trixie-20260824-slim
+
+    # The real server, because publishing a client whose Transit was never
+    # exercised would be publishing on faith. Same service the matrix uses.
+    services:
+      openbao:
+        image: openbao/openbao:2.6.2
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: release-root
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "wget -q -O- http://127.0.0.1:8200/v1/sys/health || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+
+    env:
+      BAO_TEST_ADDR: http://openbao:8200
+      BAO_TEST_TOKEN: release-root
+
+    steps:
+      - name: What the image does not carry
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git
+          rm -rf /var/lib/apt/lists/*
+          mix local.hex --force
+          mix local.rebar --force
+
+      - uses: actions/checkout@v7
+
+      # The check worth having, borrowed from yaml-elixir: a tag that says
+      # v0.2.0 on a mix.exs that says 0.1.0 publishes 0.1.0 and leaves the tag
+      # pointing at a version that was never released. Hex would accept it.
+      - name: The tag and mix.exs must agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+
+          # Read from the file, not from `mix run`: this step comes before
+          # `deps.get`, so mix cannot start the project, and with stderr
+          # silenced that failure looked like an empty version. Which is how
+          # the first v0.1.0 failed -- correctly, but for the wrong reason.
+          mix_version=$(grep -m1 '@version' mix.exs | cut -d'"' -f2)
+
+          echo "tag: $tag"
+          echo "mix.exs: $mix_version"
+
+          if [ "$tag" != "$mix_version" ]; then
+            echo "::error::tag v$tag does not match mix.exs $mix_version"
+            exit 1
+          fi
+
+      - run: mix deps.get
+
+      # Everything the ordinary CI runs, plus the integration suite. A release
+      # is the one run where being slower than necessary costs nothing.
+      - name: Gates
+        run: mix check
+
+      - name: Integration suite
+        run: mix test.all
+
+      # Printed before publishing, and this is not ceremony: Hex warns that
+      # automated publishing hides output nobody reads, and the file list is
+      # the part that matters. `priv` was 5.8 MB of Dialyzer PLT until it was
+      # excluded, and the way to notice that again is to look here.
+      - name: What is about to be published
+        run: mix hex.build
+
+      - name: Publish
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish --yes

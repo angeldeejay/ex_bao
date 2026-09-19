@@ -1,0 +1,37 @@
+# Runs the suite on Linux, against a Docker daemon that lives on the host.
+#
+#   docker compose -f docker-compose.test.yml run --rm test
+#
+# The version of OpenBao under test is a variable, which is the whole
+# compatibility matrix:
+#
+#   BAO_TEST_IMAGE=openbao/openbao:2.4.4 docker compose -f docker-compose.test.yml run --rm test
+services:
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+      args:
+        ELIXIR_VERSION: ${ELIXIR_VERSION:-1.20-alpine}
+    volumes:
+      # The working tree, so an edit runs without rebuilding the image.
+      - ./:/app
+      # Build artefacts stay in named volumes: the host's `_build` is
+      # compiled for Windows and would be overwritten by a Linux one.
+      - test_build:/app/_build
+      - test_deps:/app/deps
+      # The daemon. This is the whole trick.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Containers started from here are siblings on the host, so their
+      # published ports are on the host -- not on `localhost`, which in here
+      # means this container.
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+      BAO_TEST_IMAGE: ${BAO_TEST_IMAGE:-openbao/openbao:2.6.2}
+      MIX_ENV: test
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+volumes:
+  test_build:
+  test_deps:
