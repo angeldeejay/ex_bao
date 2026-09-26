@@ -33,11 +33,14 @@ defmodule ExBao do
       {:ok, body} ->
         {:ok, body}
 
-      # A sealed or standby server answers with a non-2xx status and a real
-      # body. That is a health *answer*, not a failed request, so it is
-      # reported as one.
+      # A server that is up but not active answers with a non-2xx status and
+      # a real body: 429 standby, 472 disaster-recovery secondary, 473
+      # performance standby, 474 standby that cannot reach its active node,
+      # 501 not initialised, 503 sealed. That is a health *answer*, not a
+      # failed request, so it is reported as one. Any other status is not
+      # something `sys/health` says about itself, and stays an error.
       {:error, %ExBao.Error{status: status, reason: body}}
-      when is_map(body) and status in 429..599 ->
+      when is_map(body) and status in [429, 472, 473, 474, 501, 503] ->
         {:ok, body}
 
       {:error, error} ->

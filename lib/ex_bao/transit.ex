@@ -44,7 +44,9 @@ defmodule ExBao.Transit do
       `encrypt_batch/4`. The key is read first, and a missing one fails with
       `:not_found` rather than being created. It costs a round trip, so it is
       off by default: the caller decides where that trade is worth making,
-      and sealing somebody's payout details is exactly where it is.
+      and sealing somebody's payout details is exactly where it is. The
+      token needs `read` on `transit/keys/<name>` for it: without that the
+      check answers `:permission_denied`, not `:not_found`.
 
     * **A policy that does not grant `create` on `transit/keys/*`** to the
       application. Free, and impossible to forget at a call site — but it
@@ -83,7 +85,7 @@ defmodule ExBao.Transit do
     * `:key_version` — seal under a specific version instead of the newest.
     * `:avoid_create_on_missing` — read the key first and fail with
       `:not_found` rather than let the server create it. Costs one extra
-      round trip; see the note on the module.
+      round trip and needs `read` on the key; see the note on the module.
   """
   @spec encrypt(server(), key(), binary(), keyword()) ::
           {:ok, String.t()} | {:error, Error.t()}
@@ -96,7 +98,7 @@ defmodule ExBao.Transit do
     with {:ok, client} <- resolve(server),
          :ok <- ensure_exists(client, key, opts),
          {:ok, %{"data" => %{"ciphertext" => ciphertext}}} <-
-           Client.request(client, :post, "transit/encrypt/#{key}", body) do
+           Client.request(client, :post, "transit/encrypt/#{segment(key)}", body) do
       {:ok, ciphertext}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -119,7 +121,7 @@ defmodule ExBao.Transit do
 
     with {:ok, client} <- resolve(server),
          {:ok, %{"data" => %{"plaintext" => encoded}}} <-
-           Client.request(client, :post, "transit/decrypt/#{key}", body),
+           Client.request(client, :post, "transit/decrypt/#{segment(key)}", body),
          {:ok, plaintext} <- decode(encoded) do
       {:ok, plaintext}
     else
@@ -159,7 +161,9 @@ defmodule ExBao.Transit do
 
   ## Options
 
-    * `:references` — one per value, echoed back with each result.
+    * `:references` — one per value, echoed back with each result. A list
+      of a different length raises `ArgumentError` rather than dropping the
+      values it does not cover.
     * `:context`, `:avoid_create_on_missing` — as in `encrypt/4`.
   """
   @spec encrypt_batch(server(), key(), [binary()], keyword()) ::
@@ -171,7 +175,7 @@ defmodule ExBao.Transit do
     # seals the whole list under the phantom one, not a single value.
     with {:ok, client} <- resolve(server),
          :ok <- ensure_exists(client, key, opts) do
-      batch(client, "transit/encrypt/#{key}", items, opts, &take(&1, "ciphertext"))
+      batch(client, "transit/encrypt/#{segment(key)}", items, opts, &take(&1, "ciphertext"))
     end
   end
 
@@ -187,7 +191,7 @@ defmodule ExBao.Transit do
   def decrypt_batch(server, key, ciphertexts, opts \\ []) when is_list(ciphertexts) do
     items = Enum.map(ciphertexts, &%{"ciphertext" => &1})
 
-    batch(server, "transit/decrypt/#{key}", items, opts, fn item ->
+    batch(server, "transit/decrypt/#{segment(key)}", items, opts, fn item ->
       with {:ok, encoded} <- take(item, "plaintext"), do: decode(encoded)
     end)
   end
@@ -256,7 +260,7 @@ defmodule ExBao.Transit do
   @spec rotate(server(), key()) :: :ok | {:error, Error.t()}
   def rotate(server, key) do
     with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{key}/rotate", %{}) do
+         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{segment(key)}/rotate", %{}) do
       :ok
     end
   end
@@ -281,7 +285,7 @@ defmodule ExBao.Transit do
 
     with {:ok, client} <- resolve(server),
          {:ok, %{"data" => %{"ciphertext" => rewrapped}}} <-
-           Client.request(client, :post, "transit/rewrap/#{key}", body) do
+           Client.request(client, :post, "transit/rewrap/#{segment(key)}", body) do
       {:ok, rewrapped}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -293,10 +297,10 @@ defmodule ExBao.Transit do
   Re-seals many values in one round trip.
   """
   @spec rewrap_batch(server(), key(), [String.t()], keyword()) ::
-          {:ok, [String.t() | {:error, Error.t()}]} | {:error, Error.t()}
+          {:ok, [result()]} | {:error, Error.t()}
   def rewrap_batch(server, key, ciphertexts, opts \\ []) when is_list(ciphertexts) do
     items = Enum.map(ciphertexts, &%{"ciphertext" => &1})
-    batch(server, "transit/rewrap/#{key}", items, opts, &take(&1, "ciphertext"))
+    batch(server, "transit/rewrap/#{segment(key)}", items, opts, &take(&1, "ciphertext"))
   end
 
   @doc """
@@ -310,7 +314,7 @@ defmodule ExBao.Transit do
   def set_min_decryption_version(server, key, version) when is_integer(version) do
     with {:ok, client} <- resolve(server),
          {:ok, _body} <-
-           Client.request(client, :post, "transit/keys/#{key}/config", %{
+           Client.request(client, :post, "transit/keys/#{segment(key)}/config", %{
              "min_decryption_version" => version
            }) do
       :ok
@@ -339,7 +343,7 @@ defmodule ExBao.Transit do
       |> maybe_put("allow_plaintext_backup", opts[:allow_plaintext_backup])
 
     with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{key}", body) do
+         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{segment(key)}", body) do
       :ok
     end
   end
@@ -350,7 +354,7 @@ defmodule ExBao.Transit do
   @spec read_key(server(), key()) :: {:ok, map()} | {:error, Error.t()}
   def read_key(server, key) do
     with {:ok, client} <- resolve(server),
-         {:ok, %{"data" => data}} <- Client.request(client, :get, "transit/keys/#{key}") do
+         {:ok, %{"data" => data}} <- Client.request(client, :get, "transit/keys/#{segment(key)}") do
       {:ok, data}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -385,7 +389,7 @@ defmodule ExBao.Transit do
   @spec delete_key(server(), key()) :: :ok | {:error, Error.t()}
   def delete_key(server, key) do
     with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :delete, "transit/keys/#{key}") do
+         {:ok, _body} <- Client.request(client, :delete, "transit/keys/#{segment(key)}") do
       :ok
     end
   end
@@ -438,6 +442,15 @@ defmodule ExBao.Transit do
     do: Enum.map(items, &Map.put(&1, "context", Base.encode64(context)))
 
   defp with_references(items, nil), do: items
+
+  # `Enum.zip/2` stops at the shorter list, so a mismatch would quietly drop
+  # the values that had no reference — the very rows a reference is there to
+  # keep track of. A caller that got the lengths wrong has a bug, and is told.
+  defp with_references(items, references) when length(items) != length(references) do
+    raise ArgumentError,
+          "got #{length(items)} values and #{length(references)} references: " <>
+            ":references needs exactly one per value"
+  end
 
   defp with_references(items, references) do
     items
@@ -503,13 +516,15 @@ defmodule ExBao.Transit do
   defp maybe_put(map, _key, nil, _fun), do: map
   defp maybe_put(map, key, value, fun), do: Map.put(map, key, fun.(value))
 
+  # `:aes256_gcm96` is `aes256-gcm96`, `:ecdsa_p256` is `ecdsa-p256`: every
+  # type OpenBao names maps from its atom by swapping underscores.
   defp type_name(type) when is_atom(type),
-    do: type |> Atom.to_string() |> String.replace("_", "-") |> fix_type()
+    do: type |> Atom.to_string() |> String.replace("_", "-")
 
   defp type_name(type) when is_binary(type), do: type
 
-  # `:aes256_gcm96` reads as `aes256-gcm96`, not `aes256-gcm-96`.
-  defp fix_type("aes128-gcm96"), do: "aes128-gcm96"
-  defp fix_type("aes256-gcm96"), do: "aes256-gcm96"
-  defp fix_type(other), do: other
+  # A key name goes into the URL. OpenBao's own names cannot hold anything
+  # that needs escaping, but a name from user input can, and escaping it
+  # keeps a stray `/` or `?` from addressing a different endpoint.
+  defp segment(name), do: URI.encode(name, &URI.char_unreserved?/1)
 end

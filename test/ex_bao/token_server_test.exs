@@ -70,7 +70,9 @@ defmodule ExBao.TokenServerTest do
         )
 
       assert Process.alive?(pid)
-      assert {:error, %ExBao.Error{}} = TokenServer.client(pid)
+
+      assert {:error, %ExBao.Error{kind: :no_token, reason: %ExBao.Error{kind: :transport}}} =
+               TokenServer.client(pid)
     end
 
     test "a fixed token needs no login at all" do
@@ -170,6 +172,183 @@ defmodule ExBao.TokenServerTest do
     end
   end
 
+  describe "when the server misbehaves during a renewal" do
+    # The reason for renewing early. An OpenBao that is unreachable at the
+    # moment of renewal must not cost a token with time left in it.
+    test "a failed login keeps the current token while it is still valid" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      logins = :counters.new(1, [])
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        send(test_pid, {:hit, conn.request_path})
+
+        case conn.request_path do
+          "/v1/auth/approle/login" ->
+            :counters.add(logins, 1, 1)
+
+            if :counters.get(logins, 1) == 1,
+              do: Req.Test.json(conn, auth_body(token: "s.first", lease: 60)),
+              else: Req.Test.transport_error(conn, :econnrefused)
+
+          "/v1/auth/token/renew-self" ->
+            Req.Test.transport_error(conn, :econnrefused)
+        end
+      end)
+
+      pid =
+        start_supervised!(
+          {TokenServer,
+           name: nil,
+           client: client(stub),
+           auth: {:approle, role_id: "r", secret_id: "s"},
+           renew_after: 0.001}
+        )
+
+      assert_receive {:hit, "/v1/auth/token/renew-self"}, 5_000
+      assert_receive {:hit, "/v1/auth/approle/login"}, 5_000
+      assert_receive {:hit, "/v1/auth/approle/login"}, 5_000
+
+      assert {:ok, %Client{token: "s.first"}} = TokenServer.client(pid)
+    end
+
+    # Refused outright is different: the server said this token is finished,
+    # and handing it out would only move the refusal somewhere else.
+    test "a refused renewal drops the token even when the login fails too" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      logins = :counters.new(1, [])
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        case conn.request_path do
+          "/v1/auth/approle/login" ->
+            :counters.add(logins, 1, 1)
+
+            if :counters.get(logins, 1) == 1 do
+              Req.Test.json(conn, auth_body(token: "s.first", lease: 60))
+            else
+              send(test_pid, :second_login)
+              Req.Test.transport_error(conn, :econnrefused)
+            end
+
+          "/v1/auth/token/renew-self" ->
+            conn
+            |> Plug.Conn.put_status(403)
+            |> Req.Test.json(%{"errors" => ["permission denied"]})
+        end
+      end)
+
+      pid =
+        start_supervised!(
+          {TokenServer,
+           name: nil,
+           client: client(stub),
+           auth: {:approle, role_id: "r", secret_id: "s"},
+           renew_after: 0.001}
+        )
+
+      assert_receive :second_login, 5_000
+      # Past the login in flight: the answer is about the state it left.
+      Process.sleep(100)
+
+      assert {:error, %ExBao.Error{kind: :no_token}} = TokenServer.client(pid)
+    end
+
+    # At its maximum TTL a token keeps renewing "successfully" while its
+    # lease shrinks to nothing. Believing that would end in a dead token
+    # read as one that never expires.
+    test "a renewal that does not extend the lease becomes a fresh login" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        send(test_pid, {:hit, conn.request_path})
+
+        case conn.request_path do
+          "/v1/auth/approle/login" -> Req.Test.json(conn, auth_body(lease: 2))
+          "/v1/auth/token/renew-self" -> Req.Test.json(conn, auth_body(lease: 0))
+        end
+      end)
+
+      start_supervised!(
+        {TokenServer,
+         name: nil,
+         client: client(stub),
+         auth: {:approle, role_id: "r", secret_id: "s"},
+         renew_after: 0.5}
+      )
+
+      assert_receive {:hit, "/v1/auth/approle/login"}, 5_000
+      assert_receive {:hit, "/v1/auth/token/renew-self"}, 5_000
+      assert_receive {:hit, "/v1/auth/approle/login"}, 5_000
+    end
+  end
+
+  describe "while a login is in flight" do
+    test "client/1 waits for it and status/1 does not" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        send(test_pid, {:login_started, self()})
+
+        receive do
+          :go -> Req.Test.json(conn, auth_body(token: "s.slow"))
+        end
+      end)
+
+      pid =
+        start_supervised!(
+          {TokenServer,
+           name: nil, client: client(stub), auth: {:approle, role_id: "r", secret_id: "s"}}
+        )
+
+      assert_receive {:login_started, login}, 5_000
+
+      waiting = Task.async(fn -> TokenServer.client(pid) end)
+
+      assert %{authenticated: false, authenticating: true} = TokenServer.status(pid)
+
+      send(login, :go)
+      assert {:ok, %Client{token: "s.slow"}} = Task.await(waiting)
+    end
+  end
+
+  describe "choosing how to authenticate" do
+    setup do
+      saved = for var <- ~w(BAO_TOKEN BAO_ROLE_ID BAO_SECRET_ID), do: {var, System.get_env(var)}
+
+      on_exit(fn ->
+        for {var, value} <- saved,
+            do: if(value, do: System.put_env(var, value), else: System.delete_env(var))
+      end)
+
+      System.delete_env("BAO_TOKEN")
+      :ok
+    end
+
+    test "AppRole credentials in the environment are enough on their own" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:login, conn.request_path, Jason.decode!(body)})
+        Req.Test.json(conn, auth_body(token: "s.env"))
+      end)
+
+      System.put_env("BAO_ROLE_ID", "role-from-env")
+      System.put_env("BAO_SECRET_ID", "secret-from-env")
+
+      pid = start_supervised!({TokenServer, name: nil, client: client(stub)})
+
+      assert {:ok, %Client{token: "s.env"}} = TokenServer.client(pid)
+
+      assert_received {:login, "/v1/auth/approle/login",
+                       %{"role_id" => "role-from-env", "secret_id" => "secret-from-env"}}
+    end
+  end
+
   describe "reauthenticate/1" do
     test "throws away the current token and gets another" do
       stub = :"stub_#{System.unique_integer([:positive])}"
@@ -205,6 +384,7 @@ defmodule ExBao.TokenServerTest do
            name: nil, client: client(stub), auth: {:approle, role_id: "r", secret_id: "s"}}
         )
 
+      {:ok, _client} = TokenServer.client(pid)
       status = TokenServer.status(pid)
 
       refute status |> inspect() |> String.contains?("s.secret")
@@ -221,6 +401,7 @@ defmodule ExBao.TokenServerTest do
            name: nil, client: client(stub), auth: {:approle, role_id: "r", secret_id: "s"}}
         )
 
+      {:ok, _client} = TokenServer.client(pid)
       assert %{expires_in: seconds} = TokenServer.status(pid)
       assert seconds > 3500
     end

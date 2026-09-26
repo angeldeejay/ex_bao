@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+* `ExBao.TokenServer` answers `kind: :no_token` when it has no token to hand
+  out, instead of `:permission_denied`. The two call for different things —
+  one is waited out, the other is a policy to fix — and the module
+  documentation already promised this one. Code matching
+  `:permission_denied` for this case has to match `:no_token` instead.
+* `ExBao.TokenServer` logs in and renews in a separate task. `client/1`
+  answers at once while a token is usable and waits for a login in flight
+  when none is; `status/1` never waits, and reports `authenticating:`.
+  `ExBao.Application` now starts `ExBao.TaskSupervisor` for this.
+* `ExBao.health/1` reports only what `sys/health` says about itself (429,
+  472, 473, 474, 501, 503) as a health answer. Any other non-2xx is an
+  error again, whatever its body.
+
+### Fixed
+
+* A failed login after a failed renewal no longer throws away a token that
+  is still valid. It is kept until it expires while the login is retried.
+  A renewal the server refuses outright still drops the token.
+* A token at its maximum TTL is replaced by a fresh login. Its renewals
+  kept "succeeding" with a shrinking lease down to zero, which then read as
+  "never expires" and left a dead token in place for good.
+* `BAO_ROLE_ID` and `BAO_SECRET_ID` are enough on their own, as the README
+  said. With no `:auth` configured the token server now tries, in order,
+  `BAO_TOKEN`, AppRole from the environment, `config :ex_bao, auth:`, and a
+  token the client already carries.
+* `:references` of a different length than the values raises
+  `ArgumentError`. It used to drop the values without a reference.
+* Transit key names and AppRole role names are escaped into the URL.
+
+### Removed
+
+* `@tag min_bao` from the integration case. Nothing used it, and it failed
+  tests it claimed to skip.
+
 ## 0.1.0 — 2026-09-19
 
 First cut. Transit and AppRole, written by hand because they are the ones

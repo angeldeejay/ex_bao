@@ -109,6 +109,7 @@ defmodule ExBao.Auth.AppRoleTest do
            auth: {:approle, role_id: ctx.role_id, secret_id: ctx.secret_id}}
         )
 
+      assert {:ok, %Client{}} = TokenServer.client(pid)
       assert %{authenticated: true, renewable: true} = TokenServer.status(pid)
 
       key = unique_key("chain")
