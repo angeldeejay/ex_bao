@@ -12,7 +12,7 @@ defmodule ExBao.GeneratedTest do
   use ExBao.BaoCase, async: false
 
   alias ExBao.Auth.Userpass
-  alias ExBao.{Client, Error, KV, Sys, Transit}
+  alias ExBao.{Error, KV, Sys, Transit}
 
   describe "KV version 2" do
     test "a secret written comes back, and a patch merges into it", %{client: c} do
@@ -60,16 +60,21 @@ defmodule ExBao.GeneratedTest do
       assert Map.has_key?(methods, mount <> "/")
 
       assert {:ok, nil} =
-               Userpass.write_user(c, "ana", password: "s3cret", token_policies: "default", mount: mount)
+               Userpass.write_user(c, "ana",
+                 password: "s3cret",
+                 token_policies: "default",
+                 mount: mount
+               )
 
-      anonymous = %Client{c | token: nil}
+      anonymous = %{c | token: nil}
 
       assert {:ok, %{"auth" => %{"client_token" => token}}} =
                Userpass.login(anonymous, "ana", password: "s3cret", mount: mount)
 
       assert is_binary(token)
 
-      assert {:error, %Error{}} = Userpass.login(anonymous, "ana", password: "wrong", mount: mount)
+      assert {:error, %Error{}} =
+               Userpass.login(anonymous, "ana", password: "wrong", mount: mount)
     end
   end
 end

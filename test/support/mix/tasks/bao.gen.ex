@@ -67,25 +67,37 @@ defmodule Mix.Tasks.Bao.Gen do
   # `ExBao.Transit` does; auth methods under `ExBao.Auth`.
   @groups [
     {"sys", "ExBao.Sys", nil, "", "The system backend: mounts, policies, leases, seal, audit."},
-    {"identity", "ExBao.Identity", nil, "", "The identity store: entities, groups, aliases, OIDC."},
-    {"cubbyhole", "ExBao.Cubbyhole", nil, "cubbyhole-", "The cubbyhole engine: storage private to one token."},
+    {"identity", "ExBao.Identity", nil, "",
+     "The identity store: entities, groups, aliases, OIDC."},
+    {"cubbyhole", "ExBao.Cubbyhole", nil, "cubbyhole-",
+     "The cubbyhole engine: storage private to one token."},
     {"auth/token", "ExBao.Auth.Token", nil, "token-", "The token auth method."},
     {"auth/approle", "ExBao.Auth.AppRole", "approle", "app-role-", nil},
     {"auth/cert", "ExBao.Auth.Cert", "cert", "cert-", "The TLS certificate auth method."},
     {"auth/jwt", "ExBao.Auth.JWT", "jwt", "jwt-", "The JWT/OIDC auth method."},
-    {"auth/kerberos", "ExBao.Auth.Kerberos", "kerberos", "kerberos-", "The Kerberos auth method."},
-    {"auth/kubernetes", "ExBao.Auth.Kubernetes", "kubernetes", "kubernetes-", "The Kubernetes auth method."},
+    {"auth/kerberos", "ExBao.Auth.Kerberos", "kerberos", "kerberos-",
+     "The Kerberos auth method."},
+    {"auth/kubernetes", "ExBao.Auth.Kubernetes", "kubernetes", "kubernetes-",
+     "The Kubernetes auth method."},
     {"auth/ldap", "ExBao.Auth.LDAP", "ldap", "ldap-", "The LDAP auth method."},
     {"auth/radius", "ExBao.Auth.Radius", "radius", "radius-", "The RADIUS auth method."},
-    {"auth/userpass", "ExBao.Auth.Userpass", "userpass", "userpass-", "The username and password auth method."},
-    {"database", "ExBao.Database", "database", "database-", "The database secrets engine: dynamic and static credentials."},
-    {"kubernetes", "ExBao.Kubernetes", "kubernetes", "kubernetes-", "The Kubernetes secrets engine: service account tokens."},
-    {"kv", "ExBao.KV.V1", "kv", "kv-", "Version 1 of the key/value secrets engine: no versions, no metadata."},
-    {"secret", "ExBao.KV", "secret", "kv-", "Version 2 of the key/value secrets engine: versioned secrets and their metadata."},
-    {"ldap", "ExBao.LDAP", "ldap", "ldap-", "The LDAP secrets engine: static, dynamic and library accounts."},
-    {"pki", "ExBao.PKI", "pki", "pki-", "The PKI secrets engine: certificate authorities, issuing, revocation, ACME."},
+    {"auth/userpass", "ExBao.Auth.Userpass", "userpass", "userpass-",
+     "The username and password auth method."},
+    {"database", "ExBao.Database", "database", "database-",
+     "The database secrets engine: dynamic and static credentials."},
+    {"kubernetes", "ExBao.Kubernetes", "kubernetes", "kubernetes-",
+     "The Kubernetes secrets engine: service account tokens."},
+    {"kv", "ExBao.KV.V1", "kv", "kv-",
+     "Version 1 of the key/value secrets engine: no versions, no metadata."},
+    {"secret", "ExBao.KV", "secret", "kv-",
+     "Version 2 of the key/value secrets engine: versioned secrets and their metadata."},
+    {"ldap", "ExBao.LDAP", "ldap", "ldap-",
+     "The LDAP secrets engine: static, dynamic and library accounts."},
+    {"pki", "ExBao.PKI", "pki", "pki-",
+     "The PKI secrets engine: certificate authorities, issuing, revocation, ACME."},
     {"rabbitmq", "ExBao.RabbitMQ", "rabbitmq", "rabbit-mq-", "The RabbitMQ secrets engine."},
-    {"ssh", "ExBao.SSH", "ssh", "ssh-", "The SSH secrets engine: signed certificates and one-time passwords."},
+    {"ssh", "ExBao.SSH", "ssh", "ssh-",
+     "The SSH secrets engine: signed certificates and one-time passwords."},
     {"totp", "ExBao.TOTP", "totp", "totp-", "The TOTP secrets engine."},
     {"transit", "ExBao.Transit", "transit", "transit-", nil}
   ]
@@ -117,7 +129,9 @@ defmodule Mix.Tasks.Bao.Gen do
       write_module(module, mount, id_prefix, title, ops, spec, version)
     end
 
-    Mix.shell().info("generated from #{file} (OpenBao #{version}, #{length(operations)} operations)")
+    Mix.shell().info(
+      "generated from #{file} (OpenBao #{version}, #{length(operations)} operations)"
+    )
   end
 
   defp newest_spec do
@@ -156,29 +170,36 @@ defmodule Mix.Tasks.Bao.Gen do
     suffixes =
       if ops |> Enum.uniq_by(& &1.path) |> length() == 1,
         do: Enum.map(ops, & &1.method),
-        else: Enum.map(segments, &(&1 -- common) |> Enum.map_join("_", fn s -> String.replace(s, ~r/\W+/, "") end))
+        else:
+          Enum.map(
+            segments,
+            &((&1 -- common) |> Enum.map_join("_", fn s -> String.replace(s, ~r/\W+/, "") end))
+          )
 
     Enum.zip_with(ops, suffixes, fn
-      op, "" -> op
-      op, suffix -> %{op | key: "#{op.id}:#{suffix}", suffix: "_" <> String.replace(suffix, "-", "_")}
+      op, "" ->
+        op
+
+      op, suffix ->
+        %{op | key: "#{op.id}:#{suffix}", suffix: "_" <> String.replace(suffix, "-", "_")}
     end)
   end
 
   defp operation(path, method, op, item, spec) do
-      %{
-        key: op["operationId"],
-        suffix: "",
-        path: path,
-        method: method,
-        id: op["operationId"],
-        group: group(path),
-        summary: op["summary"] || op["description"] || item["description"],
-        description: item["description"],
-        parameters: (item["parameters"] || []) ++ (op["parameters"] || []),
-        body: body_schema(op, spec),
-        sudo: item["x-vault-sudo"] == true,
-        unauthenticated: item["x-vault-unauthenticated"] == true
-      }
+    %{
+      key: op["operationId"],
+      suffix: "",
+      path: path,
+      method: method,
+      id: op["operationId"],
+      group: group(path),
+      summary: op["summary"] || op["description"] || item["description"],
+      description: item["description"],
+      parameters: (item["parameters"] || []) ++ (op["parameters"] || []),
+      body: body_schema(op, spec),
+      sudo: item["x-vault-sudo"] == true,
+      unauthenticated: item["x-vault-unauthenticated"] == true
+    }
   end
 
   defp group(path) do
@@ -196,19 +217,44 @@ defmodule Mix.Tasks.Bao.Gen do
 
   # ── writing a module ──────────────────────────────────────────────────────
 
+  @doc """
+  What a run would generate from a decoded specification, as it stands on
+  disk now: one map per function, with its `:module` and `:name` next to
+  the operation it comes from. Operations already covered by hand are not
+  in it.
+
+  The same list `run/1` writes, so a test can call every generated
+  function and hold each to the method and path its operation names.
+  """
+  def generated(spec) do
+    ops = operations(spec)
+
+    Enum.flat_map(@groups, fn {prefix, module, mount, id_prefix, title} ->
+      {head, _tail} = split_existing(module_file(module), module, mount, title)
+
+      ops
+      |> Enum.filter(&(&1.group == prefix))
+      |> functions(head, id_prefix)
+      |> Enum.map(&Map.merge(&1, %{module: Module.concat([module]), mount: mount}))
+    end)
+  end
+
+  defp functions(ops, head, id_prefix) do
+    covered = Regex.scan(~r/@operation\s+"([^"]+)"/, head) |> Enum.map(&List.last/1)
+
+    ops
+    |> Enum.reject(&(&1.key in covered))
+    |> Enum.map(&Map.put(&1, :name, function_name(&1.id, id_prefix) <> &1.suffix))
+    |> Enum.sort_by(& &1.name)
+  end
+
   defp write_module(module, mount, id_prefix, title, ops, _spec, version) do
     file = module_file(module)
     {head, tail} = split_existing(file, module, mount, title)
 
-    covered = Regex.scan(~r/@operation\s+"([^"]+)"/, head) |> Enum.map(&List.last/1)
     written = Regex.scan(~r/^\s+defp?\s+([a-z_][a-zA-Z0-9_?!]*)/m, head) |> Enum.map(&List.last/1)
     mount_expr = mount_expr(head, mount)
-
-    functions =
-      ops
-      |> Enum.reject(&(&1.key in covered))
-      |> Enum.map(&Map.put(&1, :name, function_name(&1.id, id_prefix) <> &1.suffix))
-      |> Enum.sort_by(& &1.name)
+    functions = functions(ops, head, id_prefix)
 
     clashes = for f <- functions, f.name in written, do: "#{module}.#{f.name} (#{f.id})"
 
@@ -250,23 +296,22 @@ defmodule Mix.Tasks.Bao.Gen do
   # without a block gets one before its closing `end`; a file that does not
   # exist gets a head of its own.
   defp split_existing(file, module, mount, title) do
-    if File.exists?(file) do
-      text = File.read!(file)
+    if File.exists?(file),
+      do: split_text(file, File.read!(file)),
+      else: {new_head(module, mount, title), "end\n"}
+  end
 
-      case String.split(text, @marker, parts: 2) do
-        [head, rest] ->
-          [_block, tail] = String.split(rest, @end_marker, parts: 2)
-          {head, String.trim_leading(tail, "\n")}
+  defp split_text(file, text) do
+    case String.split(text, @marker, parts: 2) do
+      [head, rest] ->
+        [_block, tail] = String.split(rest, @end_marker, parts: 2)
+        {head, String.trim_leading(tail, "\n")}
 
-        [_whole] ->
-          unless text =~ "use ExBao.Operation",
-            do: Mix.raise("#{file} has no `use ExBao.Operation`; add it before generating")
+      [_whole] ->
+        unless text =~ "use ExBao.Operation",
+          do: Mix.raise("#{file} has no `use ExBao.Operation`; add it before generating")
 
-          head = String.replace(text, ~r/\nend\s*\z/, "\n")
-          {head <> "\n", "end\n"}
-      end
-    else
-      {new_head(module, mount, title), "end\n"}
+        {String.replace(text, ~r/\nend\s*\z/, "\n") <> "\n", "end\n"}
     end
   end
 
@@ -318,12 +363,7 @@ defmodule Mix.Tasks.Bao.Gen do
       op.path
       |> String.trim_leading("/")
       |> relocate(mount, mount_expr)
-      |> then(fn path ->
-        Enum.reduce(names, path, fn name, acc ->
-          escape = if name in @slashed, do: "escape_path", else: "escape"
-          String.replace(acc, "{#{name}}", "\#{ExBao.Operation.#{escape}(#{arg_name(name)})}")
-        end)
-      end)
+      |> interpolate(names)
 
     {fixed, query} = query_parameters(op.parameters)
     properties = op.body["properties"] || %{}
@@ -355,6 +395,15 @@ defmodule Mix.Tasks.Bao.Gen do
     """
   end
 
+  # `{name}` in the template becomes the argument, escaped. A parameter that
+  # is a path in its own right keeps its slashes.
+  defp interpolate(path, names) do
+    Enum.reduce(names, path, fn name, acc ->
+      escape = if name in @slashed, do: "escape_path", else: "escape"
+      String.replace(acc, "{#{name}}", "\#{ExBao.Operation.#{escape}(#{arg_name(name)})}")
+    end)
+  end
+
   defp relocate(path, nil, _expr), do: path
 
   defp relocate("auth/" <> rest, _mount, expr) do
@@ -373,7 +422,10 @@ defmodule Mix.Tasks.Bao.Gen do
     query = Enum.filter(parameters, &(&1["in"] == "query"))
 
     {fixed, optional} =
-      Enum.split_with(query, &(&1["required"] == true and get_in(&1, ["schema", "enum"]) == ["true"]))
+      Enum.split_with(
+        query,
+        &(&1["required"] == true and get_in(&1, ["schema", "enum"]) == ["true"])
+      )
 
     {Map.new(fixed, &{&1["name"], "true"}), optional}
   end
@@ -405,7 +457,10 @@ defmodule Mix.Tasks.Bao.Gen do
           "Options",
           Enum.map(Enum.sort(Map.keys(properties)), &option_line(&1, properties[&1], required)) ++
             Enum.map(query, &option_line(&1["name"], &1["schema"] || %{}, [], &1["description"])) ++
-            if(mount, do: ["  * `:mount` — where the engine is mounted, `\"#{mount}\"` by default."], else: [])
+            if(mount,
+              do: ["  * `:mount` — where the engine is mounted, `\"#{mount}\"` by default."],
+              else: []
+            )
         )
       ]
       |> List.flatten()
@@ -437,9 +492,20 @@ defmodule Mix.Tasks.Bao.Gen do
 
   defp option_line(name, schema, required, description \\ nil) do
     kind = schema["format"] || schema["type"] || "any"
-    marks = Enum.reject([if(name in required, do: "required"), if(schema["deprecated"], do: "deprecated")], &is_nil/1)
+
+    marks =
+      Enum.reject(
+        [if(name in required, do: "required"), if(schema["deprecated"], do: "deprecated")],
+        &is_nil/1
+      )
+
     marks = if marks == [], do: "", else: ", " <> Enum.join(marks, ", ")
-    default = if Map.has_key?(schema, "default"), do: " Defaults to `#{inspect(schema["default"])}`.", else: ""
+
+    default =
+      if Map.has_key?(schema, "default"),
+        do: " Defaults to `#{inspect(schema["default"])}`.",
+        else: ""
+
     about = text(description || schema["description"]) || ""
 
     "  * `#{inspect(String.to_atom(name))}` (#{kind}#{marks}) — #{about}#{default}"
