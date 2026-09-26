@@ -21,6 +21,13 @@ defmodule ExBao do
       {:ok, "00912345620"} = ExBao.Transit.decrypt(MyApp.Bao, "payout", sealed)
   """
 
+  @typedoc """
+  What every operation takes as its first argument: a client, or the name
+  or pid of an `ExBao.TokenServer`, which hands out a client carrying its
+  current token.
+  """
+  @type server :: ExBao.Client.t() | GenServer.server()
+
   @doc """
   Whether the server is up, unsealed and answering.
 

@@ -23,6 +23,12 @@ defmodule ExBao.Transit do
   value and you get the value back. Making every caller encode and decode is
   a way to eventually get it wrong somewhere.
 
+  ## Where it is mounted
+
+  Every function takes `:mount`, `"transit"` by default. A server can mount
+  the engine more than once — one mount per tenant, say — and then the mount
+  is the only thing that says which one you mean.
+
   ## Whose job is the key
 
   Creating and rotating keys lives here too, but that is operational work,
@@ -57,9 +63,11 @@ defmodule ExBao.Transit do
   it. The second catches it even in code that forgot to ask.
   """
 
-  alias ExBao.{Client, Error, TokenServer}
+  alias ExBao.{Client, Error, Operation}
 
-  @type server :: Client.t() | GenServer.server()
+  import Operation, only: [escape: 1, put: 3, put: 4, unexpected: 1]
+
+  @type server :: ExBao.server()
   @type key :: String.t()
 
   @typedoc """
@@ -92,13 +100,13 @@ defmodule ExBao.Transit do
   def encrypt(server, key, plaintext, opts \\ []) when is_binary(plaintext) do
     body =
       %{"plaintext" => Base.encode64(plaintext)}
-      |> maybe_put("context", opts[:context], &Base.encode64/1)
-      |> maybe_put("key_version", opts[:key_version])
+      |> put("context", opts[:context], &Base.encode64/1)
+      |> put("key_version", opts[:key_version])
 
-    with {:ok, client} <- resolve(server),
+    with {:ok, client} <- Operation.resolve(server),
          :ok <- ensure_exists(client, key, opts),
          {:ok, %{"data" => %{"ciphertext" => ciphertext}}} <-
-           Client.request(client, :post, "transit/encrypt/#{segment(key)}", body) do
+           Client.request(client, :post, "#{mount(opts)}/encrypt/#{escape(key)}", body) do
       {:ok, ciphertext}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -117,11 +125,11 @@ defmodule ExBao.Transit do
   def decrypt(server, key, ciphertext, opts \\ []) when is_binary(ciphertext) do
     body =
       %{"ciphertext" => ciphertext}
-      |> maybe_put("context", opts[:context], &Base.encode64/1)
+      |> put("context", opts[:context], &Base.encode64/1)
 
-    with {:ok, client} <- resolve(server),
+    with {:ok, client} <- Operation.resolve(server),
          {:ok, %{"data" => %{"plaintext" => encoded}}} <-
-           Client.request(client, :post, "transit/decrypt/#{segment(key)}", body),
+           Client.request(client, :post, "#{mount(opts)}/decrypt/#{escape(key)}", body),
          {:ok, plaintext} <- decode(encoded) do
       {:ok, plaintext}
     else
@@ -173,9 +181,9 @@ defmodule ExBao.Transit do
 
     # The same guard as `encrypt/4`, and it matters more here: a mistyped key
     # seals the whole list under the phantom one, not a single value.
-    with {:ok, client} <- resolve(server),
+    with {:ok, client} <- Operation.resolve(server),
          :ok <- ensure_exists(client, key, opts) do
-      batch(client, "transit/encrypt/#{segment(key)}", items, opts, &take(&1, "ciphertext"))
+      batch(client, "#{mount(opts)}/encrypt/#{escape(key)}", items, opts, &take(&1, "ciphertext"))
     end
   end
 
@@ -191,7 +199,7 @@ defmodule ExBao.Transit do
   def decrypt_batch(server, key, ciphertexts, opts \\ []) when is_list(ciphertexts) do
     items = Enum.map(ciphertexts, &%{"ciphertext" => &1})
 
-    batch(server, "transit/decrypt/#{segment(key)}", items, opts, fn item ->
+    batch(server, "#{mount(opts)}/decrypt/#{escape(key)}", items, opts, fn item ->
       with {:ok, encoded} <- take(item, "plaintext"), do: decode(encoded)
     end)
   end
@@ -257,10 +265,11 @@ defmodule ExBao.Transit do
   It does not invalidate the old versions: everything already sealed keeps
   opening. New values are sealed under the new version.
   """
-  @spec rotate(server(), key()) :: :ok | {:error, Error.t()}
-  def rotate(server, key) do
-    with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{segment(key)}/rotate", %{}) do
+  @spec rotate(server(), key(), keyword()) :: :ok | {:error, Error.t()}
+  def rotate(server, key, opts \\ []) do
+    with {:ok, client} <- Operation.resolve(server),
+         {:ok, _body} <-
+           Client.request(client, :post, "#{mount(opts)}/keys/#{escape(key)}/rotate", %{}) do
       :ok
     end
   end
@@ -281,11 +290,11 @@ defmodule ExBao.Transit do
   def rewrap(server, key, ciphertext, opts \\ []) do
     body =
       %{"ciphertext" => ciphertext}
-      |> maybe_put("context", opts[:context], &Base.encode64/1)
+      |> put("context", opts[:context], &Base.encode64/1)
 
-    with {:ok, client} <- resolve(server),
+    with {:ok, client} <- Operation.resolve(server),
          {:ok, %{"data" => %{"ciphertext" => rewrapped}}} <-
-           Client.request(client, :post, "transit/rewrap/#{segment(key)}", body) do
+           Client.request(client, :post, "#{mount(opts)}/rewrap/#{escape(key)}", body) do
       {:ok, rewrapped}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -300,7 +309,7 @@ defmodule ExBao.Transit do
           {:ok, [result()]} | {:error, Error.t()}
   def rewrap_batch(server, key, ciphertexts, opts \\ []) when is_list(ciphertexts) do
     items = Enum.map(ciphertexts, &%{"ciphertext" => &1})
-    batch(server, "transit/rewrap/#{segment(key)}", items, opts, &take(&1, "ciphertext"))
+    batch(server, "#{mount(opts)}/rewrap/#{escape(key)}", items, opts, &take(&1, "ciphertext"))
   end
 
   @doc """
@@ -310,11 +319,12 @@ defmodule ExBao.Transit do
   what makes a compromised old version useless, and it is also what makes
   anything you forgot to rewrap unreadable.
   """
-  @spec set_min_decryption_version(server(), key(), pos_integer()) :: :ok | {:error, Error.t()}
-  def set_min_decryption_version(server, key, version) when is_integer(version) do
-    with {:ok, client} <- resolve(server),
+  @spec set_min_decryption_version(server(), key(), pos_integer(), keyword()) ::
+          :ok | {:error, Error.t()}
+  def set_min_decryption_version(server, key, version, opts \\ []) when is_integer(version) do
+    with {:ok, client} <- Operation.resolve(server),
          {:ok, _body} <-
-           Client.request(client, :post, "transit/keys/#{segment(key)}/config", %{
+           Client.request(client, :post, "#{mount(opts)}/keys/#{escape(key)}/config", %{
              "min_decryption_version" => version
            }) do
       :ok
@@ -338,12 +348,12 @@ defmodule ExBao.Transit do
   def create_key(server, key, opts \\ []) do
     body =
       %{"type" => opts |> Keyword.get(:type, :aes256_gcm96) |> type_name()}
-      |> maybe_put("derived", opts[:derived])
-      |> maybe_put("exportable", opts[:exportable])
-      |> maybe_put("allow_plaintext_backup", opts[:allow_plaintext_backup])
+      |> put("derived", opts[:derived])
+      |> put("exportable", opts[:exportable])
+      |> put("allow_plaintext_backup", opts[:allow_plaintext_backup])
 
-    with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :post, "transit/keys/#{segment(key)}", body) do
+    with {:ok, client} <- Operation.resolve(server),
+         {:ok, _body} <- Client.request(client, :post, "#{mount(opts)}/keys/#{escape(key)}", body) do
       :ok
     end
   end
@@ -351,10 +361,11 @@ defmodule ExBao.Transit do
   @doc """
   Reads a key's configuration. Never its material.
   """
-  @spec read_key(server(), key()) :: {:ok, map()} | {:error, Error.t()}
-  def read_key(server, key) do
-    with {:ok, client} <- resolve(server),
-         {:ok, %{"data" => data}} <- Client.request(client, :get, "transit/keys/#{segment(key)}") do
+  @spec read_key(server(), key(), keyword()) :: {:ok, map()} | {:error, Error.t()}
+  def read_key(server, key, opts \\ []) do
+    with {:ok, client} <- Operation.resolve(server),
+         {:ok, %{"data" => data}} <-
+           Client.request(client, :get, "#{mount(opts)}/keys/#{escape(key)}") do
       {:ok, data}
     else
       {:ok, body} -> {:error, unexpected(body)}
@@ -369,10 +380,10 @@ defmodule ExBao.Transit do
   a valid answer to "which keys are there", and making every caller handle a
   404 that means "none" is how that check gets forgotten.
   """
-  @spec list_keys(server()) :: {:ok, [String.t()]} | {:error, Error.t()}
-  def list_keys(server) do
-    with {:ok, client} <- resolve(server),
-         {:ok, body} <- Client.request(client, :get, "transit/keys?list=true") do
+  @spec list_keys(server(), keyword()) :: {:ok, [String.t()]} | {:error, Error.t()}
+  def list_keys(server, opts \\ []) do
+    with {:ok, client} <- Operation.resolve(server),
+         {:ok, body} <- Client.request(client, :get, "#{mount(opts)}/keys?list=true") do
       {:ok, get_in(body, ["data", "keys"]) || []}
     else
       {:error, %Error{kind: :not_found}} -> {:ok, []}
@@ -386,21 +397,17 @@ defmodule ExBao.Transit do
   The server refuses unless the key was configured with `deletion_allowed`,
   which is a guard worth leaving on.
   """
-  @spec delete_key(server(), key()) :: :ok | {:error, Error.t()}
-  def delete_key(server, key) do
-    with {:ok, client} <- resolve(server),
-         {:ok, _body} <- Client.request(client, :delete, "transit/keys/#{segment(key)}") do
+  @spec delete_key(server(), key(), keyword()) :: :ok | {:error, Error.t()}
+  def delete_key(server, key, opts \\ []) do
+    with {:ok, client} <- Operation.resolve(server),
+         {:ok, _body} <- Client.request(client, :delete, "#{mount(opts)}/keys/#{escape(key)}") do
       :ok
     end
   end
 
   # ── plumbing ──────────────────────────────────────────────────────────────
 
-  # A caller can pass a client directly or the name of a token server. The
-  # second is what an application uses; the first is what a test uses, and
-  # what a script with a root token uses.
-  defp resolve(%Client{} = client), do: {:ok, client}
-  defp resolve(server), do: TokenServer.client(server)
+  defp mount(opts), do: Operation.mount(opts, "transit")
 
   # Reading before writing, when asked. OpenBao has no flag for this — its
   # `encrypt` creates what is missing and there is no way to tell it not to —
@@ -411,7 +418,7 @@ defmodule ExBao.Transit do
   # is exactly when a stale "yes" would send values at a key that is gone.
   defp ensure_exists(client, key, opts) do
     if Keyword.get(opts, :avoid_create_on_missing, false) do
-      with {:ok, _key} <- read_key(client, key), do: :ok
+      with {:ok, _key} <- read_key(client, key, opts), do: :ok
     else
       :ok
     end
@@ -429,7 +436,7 @@ defmodule ExBao.Transit do
       |> with_context(opts[:context])
       |> with_references(opts[:references])
 
-    with {:ok, client} <- resolve(server),
+    with {:ok, client} <- Operation.resolve(server),
          {:ok, results} <-
            results(Client.request(client, :post, path, %{"batch_input" => items})) do
       {:ok, Enum.map(results, &label(&1, extract, opts[:references]))}
@@ -502,29 +509,10 @@ defmodule ExBao.Transit do
     end
   end
 
-  defp unexpected(body) do
-    %Error{
-      kind: :unknown,
-      status: 200,
-      messages: ["unexpected response shape"],
-      reason: body
-    }
-  end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-  defp maybe_put(map, _key, nil, _fun), do: map
-  defp maybe_put(map, key, value, fun), do: Map.put(map, key, fun.(value))
-
   # `:aes256_gcm96` is `aes256-gcm96`, `:ecdsa_p256` is `ecdsa-p256`: every
   # type OpenBao names maps from its atom by swapping underscores.
   defp type_name(type) when is_atom(type),
     do: type |> Atom.to_string() |> String.replace("_", "-")
 
   defp type_name(type) when is_binary(type), do: type
-
-  # A key name goes into the URL. OpenBao's own names cannot hold anything
-  # that needs escaping, but a name from user input can, and escaping it
-  # keeps a stray `/` or `?` from addressing a different endpoint.
-  defp segment(name), do: URI.encode(name, &URI.char_unreserved?/1)
 end

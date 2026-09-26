@@ -17,6 +17,18 @@
   472, 473, 474, 501, 503) as a health answer. Any other non-2xx is an
   error again, whatever its body.
 
+### Added
+
+* `:mount` on every `ExBao.Transit` function, `"transit"` by default, for a
+  server that mounts the engine somewhere else or more than once. The
+  functions that took no options now take them as an optional last
+  argument.
+* `:mount` on `ExBao.Auth.AppRole`, the name every module shares. `:path`
+  keeps working and `:mount` wins when both are given.
+* `AppRole.read_role_id/3` and `generate_secret_id/3` take a token server as
+  well as a client.
+* `ExBao.server/0`, the type every operation takes first.
+
 ### Fixed
 
 * A failed login after a failed renewal no longer throws away a token that

@@ -13,7 +13,7 @@ defmodule ExBao.Auth.AppRole do
   told how long it lasts.
   """
 
-  alias ExBao.{Auth, Client, Error}
+  alias ExBao.{Auth, Client, Error, Operation}
 
   @doc """
   Exchanges a role id and a secret id for a token.
@@ -22,9 +22,10 @@ defmodule ExBao.Auth.AppRole do
 
     * `:role_id` — required. From `BAO_ROLE_ID` otherwise.
     * `:secret_id` — required. From `BAO_SECRET_ID` otherwise.
-    * `:path` — where the method is mounted, `"approle"` by default. A server
-      can mount the same method twice under different paths, and then the
-      path is the only thing that says which one you mean.
+    * `:mount` — where the method is mounted, `"approle"` by default. A
+      server can mount the same method twice under different paths, and then
+      the mount is the only thing that says which one you mean. `:path` is
+      still accepted for it, as it was in 0.1.0.
 
   ## Examples
 
@@ -35,10 +36,8 @@ defmodule ExBao.Auth.AppRole do
   def login(%Client{} = client, opts \\ []) do
     with {:ok, role_id} <- fetch(opts, :role_id, "BAO_ROLE_ID"),
          {:ok, secret_id} <- fetch(opts, :secret_id, "BAO_SECRET_ID") do
-      path = Keyword.get(opts, :path, "approle")
-
       client
-      |> Client.request(:post, "auth/#{path}/login", %{
+      |> Client.request(:post, "auth/#{mount(opts)}/login", %{
         "role_id" => role_id,
         "secret_id" => secret_id
       })
@@ -48,39 +47,43 @@ defmodule ExBao.Auth.AppRole do
 
   @doc """
   Reads the role id of a role. Useful when provisioning, not at runtime.
-  """
-  @spec read_role_id(Client.t(), String.t(), keyword()) ::
-          {:ok, String.t()} | {:error, Error.t()}
-  def read_role_id(%Client{} = client, role, opts \\ []) do
-    path = Keyword.get(opts, :path, "approle")
 
-    case Client.request(client, :get, role_path(path, role, "role-id")) do
+  Takes a client or a token server, and `:mount` as `login/2` does.
+  """
+  @spec read_role_id(ExBao.server(), String.t(), keyword()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  def read_role_id(server, role, opts \\ []) do
+    case Operation.request(server, :get, role_path(opts, role, "role-id")) do
       {:ok, %{"data" => %{"role_id" => role_id}}} -> {:ok, role_id}
-      {:ok, other} -> {:error, Error.from_response(200, other)}
+      {:ok, other} -> {:error, Operation.unexpected(other)}
       {:error, error} -> {:error, error}
     end
   end
 
   @doc """
   Issues a new secret id for a role. Useful when provisioning, not at runtime.
-  """
-  @spec generate_secret_id(Client.t(), String.t(), keyword()) ::
-          {:ok, map()} | {:error, Error.t()}
-  def generate_secret_id(%Client{} = client, role, opts \\ []) do
-    path = Keyword.get(opts, :path, "approle")
 
-    case Client.request(client, :post, role_path(path, role, "secret-id"), %{}) do
+  Takes a client or a token server, and `:mount` as `login/2` does.
+  """
+  @spec generate_secret_id(ExBao.server(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, Error.t()}
+  def generate_secret_id(server, role, opts \\ []) do
+    case Operation.request(server, :post, role_path(opts, role, "secret-id"), %{}) do
       {:ok, %{"data" => data}} -> {:ok, data}
-      {:ok, other} -> {:error, Error.from_response(200, other)}
+      {:ok, other} -> {:error, Operation.unexpected(other)}
       {:error, error} -> {:error, error}
     end
   end
 
+  # `:path` was the option's name in 0.1.0. It keeps working, and `:mount`
+  # wins when both are given, since it is the name every module shares.
+  defp mount(opts), do: Operation.mount(opts, Keyword.get(opts, :path, "approle"))
+
   # The role name is escaped: one from user input must not be able to
-  # address a different endpoint. The mount path is not, since a method
-  # mounted under `team/approle` legitimately has a slash in it.
-  defp role_path(path, role, leaf),
-    do: "auth/#{path}/role/#{URI.encode(role, &URI.char_unreserved?/1)}/#{leaf}"
+  # address a different endpoint. The mount is not, since a method mounted
+  # under `team/approle` legitimately has a slash in it.
+  defp role_path(opts, role, leaf),
+    do: "auth/#{mount(opts)}/role/#{Operation.escape(role)}/#{leaf}"
 
   # A missing credential is not a request worth making: sending `nil` would
   # get a 400 back and the error would describe the server's opinion of an

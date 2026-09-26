@@ -43,6 +43,24 @@ defmodule ExBao.TransitUnitTest do
     end
   end
 
+  describe ":mount" do
+    test "points every call at the mount it names" do
+      stub = :"stub_#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      Req.Test.stub(stub, fn conn ->
+        send(test_pid, {:path, conn.request_path})
+        Req.Test.json(conn, %{"data" => %{"keys" => ["k"], "ciphertext" => "vault:v1:x"}})
+      end)
+
+      assert {:ok, "vault:v1:x"} = Transit.encrypt(client(stub), "k", "v", mount: "team/transit")
+      assert_received {:path, "/v1/team/transit/encrypt/k"}
+
+      assert {:ok, ["k"]} = Transit.list_keys(client(stub), mount: "/team/transit/")
+      assert_received {:path, "/v1/team/transit/keys"}
+    end
+  end
+
   describe "ExBao.health/1" do
     test "a standby answers with its status, and that is a health answer" do
       stub = :"stub_#{System.unique_integer([:positive])}"
