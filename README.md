@@ -287,6 +287,12 @@ lease rather than on expiry, and re-authenticates from scratch if a renewal is
 refused — a token can be revoked, and a renewal loop that only knows how to
 renew will spin forever against a token that will never come back.
 
+If that new login fails too — OpenBao briefly unreachable, say — the current
+token stays in use for as long as it is still valid, and the login is retried
+with a backoff. That margin is the whole point of renewing early. Logins and
+renewals run in a task of their own, so a slow server never makes a caller
+time out waiting on the process that holds the token.
+
 It does **not** cache secrets. A client that caches has to decide when to stop
 trusting the cache, and that decision belongs to the caller who knows what the
 value is for.

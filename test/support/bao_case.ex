@@ -21,11 +21,6 @@ defmodule ExBao.BaoCase do
   Everything here is tagged `:integration`, so a plain `mix test` skips it and
   runs anywhere with no Docker at all.
 
-  `@tag min_bao: "2.5"` skips a test on servers older than that. It matters
-  more than it looks: a feature 2.4 never had is **not** a regression, and a
-  matrix that cannot tell "not yet" from "broken" is a matrix everyone learns
-  to ignore.
-
   ## Pointing at a server you already have
 
   `BAO_TEST_ADDR` skips the container entirely and uses that address. For
@@ -72,19 +67,9 @@ defmodule ExBao.BaoCase do
     end
   end
 
-  setup %{addr: addr, token: token} = context do
+  setup %{addr: addr, token: token} do
     client = ExBao.Client.new(addr: addr, token: token)
-    version = server_version(client)
-
-    if needed = context[:min_bao] do
-      if older?(version, needed) do
-        # Skipped, not failed. See the moduledoc: "not yet" and "broken" are
-        # different answers and a matrix has to keep them apart.
-        raise ExUnit.AssertionError, message: "needs OpenBao #{needed}, server is #{version}"
-      end
-    end
-
-    {:ok, client: client, bao_version: version}
+    {:ok, client: client, bao_version: server_version(client)}
   end
 
   @doc "A key name unique to this test, so tests never collide."
@@ -96,19 +81,6 @@ defmodule ExBao.BaoCase do
       {:ok, %{"version" => version}} -> version
       _ -> "0.0.0"
     end
-  end
-
-  @doc false
-  def older?(version, needed), do: parse(version) < parse(needed)
-
-  defp parse(version) do
-    version
-    |> to_string()
-    |> String.split(~r/[^0-9.]/, parts: 2)
-    |> hd()
-    |> String.split(".")
-    |> Enum.map(&String.to_integer/1)
-    |> Enum.take(3)
   end
 
   # Testcontainers itself is started in `test_helper.exs`, once for the whole

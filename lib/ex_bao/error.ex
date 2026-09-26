@@ -17,6 +17,11 @@ defmodule ExBao.Error do
         {:error, %ExBao.Error{kind: :sealed}} -> :try_again_later
       end
 
+  `:no_token` never comes from the server: it is `ExBao.TokenServer` saying
+  it has no token to hand out yet — at boot, or while a login is failing.
+  It is kept apart from `:permission_denied` because the two call for
+  different things: one is waited out, the other is a policy to fix.
+
   `:unknown` is deliberately in the list: a kind we have not mapped is still
   an error, and swallowing it into something adjacent would be worse than
   saying plainly that we do not recognise it.
@@ -25,6 +30,7 @@ defmodule ExBao.Error do
   @type kind ::
           :invalid_credentials
           | :permission_denied
+          | :no_token
           | :not_found
           | :invalid_ciphertext
           | :invalid_request

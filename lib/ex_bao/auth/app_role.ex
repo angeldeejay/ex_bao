@@ -54,7 +54,7 @@ defmodule ExBao.Auth.AppRole do
   def read_role_id(%Client{} = client, role, opts \\ []) do
     path = Keyword.get(opts, :path, "approle")
 
-    case Client.request(client, :get, "auth/#{path}/role/#{role}/role-id") do
+    case Client.request(client, :get, role_path(path, role, "role-id")) do
       {:ok, %{"data" => %{"role_id" => role_id}}} -> {:ok, role_id}
       {:ok, other} -> {:error, Error.from_response(200, other)}
       {:error, error} -> {:error, error}
@@ -69,12 +69,18 @@ defmodule ExBao.Auth.AppRole do
   def generate_secret_id(%Client{} = client, role, opts \\ []) do
     path = Keyword.get(opts, :path, "approle")
 
-    case Client.request(client, :post, "auth/#{path}/role/#{role}/secret-id", %{}) do
+    case Client.request(client, :post, role_path(path, role, "secret-id"), %{}) do
       {:ok, %{"data" => data}} -> {:ok, data}
       {:ok, other} -> {:error, Error.from_response(200, other)}
       {:error, error} -> {:error, error}
     end
   end
+
+  # The role name is escaped: one from user input must not be able to
+  # address a different endpoint. The mount path is not, since a method
+  # mounted under `team/approle` legitimately has a slash in it.
+  defp role_path(path, role, leaf),
+    do: "auth/#{path}/role/#{URI.encode(role, &URI.char_unreserved?/1)}/#{leaf}"
 
   # A missing credential is not a request worth making: sending `nil` would
   # get a 400 back and the error would describe the server's opinion of an
