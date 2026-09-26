@@ -243,6 +243,9 @@ Secrets engines are `ExBao.KV`, `ExBao.KV.V1`, `ExBao.PKI`, `ExBao.SSH`,
 `ExBao.Auth`; the system backend is `ExBao.Sys`, and the identity store
 `ExBao.Identity`.
 
+What is covered, operation by operation, and what comes next is in
+[ROADMAP.md](ROADMAP.md).
+
 ## Compatibility
 
 Every release is tested against each supported OpenBao series by running the
@@ -334,9 +337,10 @@ value is for.
 ### On generated and curated
 
 The generated layer is faithful to the specification and to nothing more.
-The specification describes requests well and responses barely — about one
-operation in six says what it answers — so generated functions hand back the
-JSON as the server sent it rather than guess at a shape nobody promised.
+The specification describes requests well and responses barely — fewer than
+a third of its operations, 232 of 761, say what they answer — so generated
+functions hand back the JSON as the server sent it rather than guess at a
+shape nobody promised.
 
 What the specification cannot say is written by hand, above the generated
 block of the same module: that Transit wants base64, that a batch with one bad
