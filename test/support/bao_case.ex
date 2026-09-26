@@ -72,8 +72,40 @@ defmodule ExBao.BaoCase do
     {:ok, client: client, bao_version: server_version(client)}
   end
 
-  @doc "A key name unique to this test, so tests never collide."
-  def unique_key(prefix \\ "t"), do: "#{prefix}_#{System.unique_integer([:positive])}"
+  @doc """
+  A name unique to this test, so tests never collide.
+
+  Unique across runs too, not only within one. `System.unique_integer/1`
+  restarts with the VM, so on a server that outlives the suite — the one
+  `BAO_TEST_ADDR` points at — a second run would be handed the names of
+  the first, along with whatever the first did to them: a key already
+  rotated twice makes "raise the minimum version to 2" lock nothing out.
+  """
+  def unique_key(prefix \\ "t") do
+    "#{prefix}_#{run_id()}_#{System.unique_integer([:positive])}"
+  end
+
+  defp run_id do
+    case :persistent_term.get({__MODULE__, :run_id}, nil) do
+      nil ->
+        id = 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
+        :persistent_term.put({__MODULE__, :run_id}, id)
+        id
+
+      id ->
+        id
+    end
+  end
+
+  @doc """
+  Deletes a Transit key, which the server refuses until the key says it
+  may be deleted. Without the first step, cleaning up only looks like it
+  happens.
+  """
+  def delete_transit_key(client, key) do
+    {:ok, _} = ExBao.Transit.configure_key(client, key, deletion_allowed: true)
+    :ok = ExBao.Transit.delete_key(client, key)
+  end
 
   @doc false
   def server_version(client) do

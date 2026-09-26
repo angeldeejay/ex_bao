@@ -11,6 +11,11 @@ defmodule ExBao do
     * `ExBao.Client` — where the server is. A value, not a process.
     * `ExBao.Error` — what went wrong, in a shape you can match on.
 
+  Everything else OpenBao ships built in is generated from its own OpenAPI
+  specification, one module per engine: `ExBao.KV`, `ExBao.PKI`,
+  `ExBao.Sys`, `ExBao.Auth.Userpass` and the rest. Same first argument, same
+  errors; the options are the endpoint's own fields.
+
   ## The short version
 
       # in your supervision tree
@@ -20,6 +25,13 @@ defmodule ExBao do
       {:ok, sealed} = ExBao.Transit.encrypt(MyApp.Bao, "payout", "00912345620")
       {:ok, "00912345620"} = ExBao.Transit.decrypt(MyApp.Bao, "payout", sealed)
   """
+
+  @typedoc """
+  What every operation takes as its first argument: a client, or the name
+  or pid of an `ExBao.TokenServer`, which hands out a client carrying its
+  current token.
+  """
+  @type server :: ExBao.Client.t() | GenServer.server()
 
   @doc """
   Whether the server is up, unsealed and answering.

@@ -14,7 +14,7 @@ defmodule ExBao.TransitTest do
   setup %{client: client} do
     key = unique_key("transit")
     :ok = Transit.create_key(client, key)
-    on_exit(fn -> Transit.delete_key(client, key) end)
+    on_exit(fn -> delete_transit_key(client, key) end)
     {:ok, key: key}
   end
 
@@ -69,7 +69,7 @@ defmodule ExBao.TransitTest do
     # key and seals under it. The moduledoc says so and says what guards it.
     test "sealing under an unknown key creates it", %{client: c} do
       key = unique_key("upsert")
-      on_exit(fn -> Transit.delete_key(c, key) end)
+      on_exit(fn -> delete_transit_key(c, key) end)
 
       assert {:ok, sealed} = Transit.encrypt(c, key, "x")
       assert String.starts_with?(sealed, "vault:v1:")
