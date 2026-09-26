@@ -1,7 +1,8 @@
 # ExBao
 
-An [OpenBao](https://openbao.org) client for Elixir: Transit, AppRole, and a
-supervised token that renews itself before it expires.
+An [OpenBao](https://openbao.org) client for Elixir: the whole API, generated
+from OpenBao's own specification; Transit and AppRole designed by hand on top
+of it; and a supervised token that renews itself before it expires.
 
 [![Hex.pm](https://img.shields.io/hexpm/v/ex_bao.svg)](https://hex.pm/packages/ex_bao)
 [![Hex.pm](https://img.shields.io/hexpm/dt/ex_bao.svg)](https://hex.pm/packages/ex_bao)
@@ -209,6 +210,39 @@ iex> ExBao.Transit.list_keys(server)
 {:ok, ["payout", "totp"]}
 ```
 
+### Everything else
+
+Every other endpoint of every engine and auth method OpenBao ships built in is
+there too — 761 operations as of 2.6.2 — generated from the server's own
+OpenAPI specification. One module per engine, one function per endpoint:
+
+```elixir
+iex> ExBao.KV.write_data_path(server, "app/db", data: %{"user" => "app", "pass" => "..."})
+{:ok, %{"data" => %{"version" => 1, ...}}}
+
+iex> ExBao.PKI.issue_with_role(server, "web", common_name: "api.internal", ttl: "24h")
+{:ok, %{"data" => %{"certificate" => "-----BEGIN CERTIFICATE-----...", ...}}}
+
+iex> ExBao.Sys.auth_enable_method(server, "userpass", type: "userpass")
+{:ok, nil}
+```
+
+The shape is the same everywhere:
+
+* The first argument is a client or a token server, as in `ExBao.Transit`.
+* Path parameters are arguments, in the order the path names them.
+* Every other field is an option. **An option the endpoint does not accept
+  raises `ArgumentError`** instead of being sent and silently ignored, and a
+  required one left out does too.
+* `:mount` says where the engine lives when it is not at its default path.
+* The answer is the server's JSON body, untouched, or `nil` for a 204.
+
+Secrets engines are `ExBao.KV`, `ExBao.KV.V1`, `ExBao.PKI`, `ExBao.SSH`,
+`ExBao.TOTP`, `ExBao.Database`, `ExBao.RabbitMQ`, `ExBao.Kubernetes`,
+`ExBao.LDAP`, `ExBao.Cubbyhole` and `ExBao.Transit`; auth methods are under
+`ExBao.Auth`; the system backend is `ExBao.Sys`, and the identity store
+`ExBao.Identity`.
+
 ## Compatibility
 
 Every release is tested against each supported OpenBao series by running the
@@ -297,13 +331,30 @@ It does **not** cache secrets. A client that caches has to decide when to stop
 trusting the cache, and that decision belongs to the caller who knows what the
 value is for.
 
-### On what is not here yet
+### On generated and curated
 
-This is an alpha. Transit and AppRole are implemented by hand because they are
-the ones worth designing. The rest of OpenBao's API — 292 paths and 444
-operations as of 2.6.2 — will be generated from the server's own OpenAPI
-specification rather than transcribed from another client, so that it stays
-honest across versions.
+The generated layer is faithful to the specification and to nothing more.
+The specification describes requests well and responses barely — about one
+operation in six says what it answers — so generated functions hand back the
+JSON as the server sent it rather than guess at a shape nobody promised.
+
+What the specification cannot say is written by hand, above the generated
+block of the same module: that Transit wants base64, that a batch with one bad
+element answers 400 with every result in it, that sealing under a missing key
+creates one. `ExBao.Transit` and `ExBao.Auth.AppRole` are curated that way,
+and any other operation can be: move its function above the block and edit
+it, and `mix bao.gen` stops generating it.
+
+A test holds the modules to the specification: every operation in the newest
+captured one must be covered by some function, generated or curated. A new
+OpenBao release is then two commands and a diff —
+
+```console
+$ mix bao.openapi --addr http://127.0.0.1:8200 --out priv/openapi/2.7.0.json
+$ mix bao.gen
+```
+
+— and the diff is the list of what changed.
 
 ## Releasing
 

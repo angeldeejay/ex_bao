@@ -35,10 +35,15 @@ defmodule Mix.Tasks.Bao.Openapi do
 
   ## Why the mounts matter
 
-  What the server reports depends on which engines are mounted, so a run that
-  mounts a different set produces a different specification and a diff full
-  of noise. This task mounts exactly what the test suite mounts — transit and
-  approle — before asking.
+  What the server reports depends on which engines are mounted: an engine
+  that is not mounted is not described at all. So this task mounts every
+  engine and auth method OpenBao ships built in, each at its default path,
+  before asking. The specification is then the whole API, and the modules
+  generated from it by `mix bao.gen` cover the whole client.
+
+  The set is fixed here rather than read from the server's plugin catalog,
+  so a new built-in in a release shows up as a line to add in review, not
+  as a silent change in what gets generated.
 
   ## Options
 
@@ -120,12 +125,31 @@ defmodule Mix.Tasks.Bao.Openapi do
     {client, fn -> :ok end}
   end
 
-  # The same set the test suite mounts. See the moduledoc: a different set is
-  # a different specification, and the diff would be about the mounts rather
-  # than about the release.
+  # Every built-in of 2.6.2, at its default path. `oidc` is left out: it is
+  # the `jwt` plugin under another name and describes the same endpoints.
+  # `openldap` likewise is `ldap`. KV is mounted twice, because its two
+  # versions are different APIs: version 2 is the dev server's `secret/`,
+  # version 1 goes at `kv/`.
+  #
+  # A mount that already exists answers 400 and is left as it is, so this
+  # can run against a server that the test suite has already prepared.
+  @auth_methods ~w(approle cert jwt kerberos kubernetes ldap radius userpass)
+  @secret_engines ~w(transit pki ssh totp database rabbitmq kubernetes ldap)
+
   defp mount_engines(client) do
-    ExBao.Client.request(client, :post, "sys/mounts/transit", %{"type" => "transit"})
-    ExBao.Client.request(client, :post, "sys/auth/approle", %{"type" => "approle"})
+    for type <- @auth_methods do
+      ExBao.Client.request(client, :post, "sys/auth/#{type}", %{"type" => type})
+    end
+
+    for type <- @secret_engines do
+      ExBao.Client.request(client, :post, "sys/mounts/#{type}", %{"type" => type})
+    end
+
+    ExBao.Client.request(client, :post, "sys/mounts/kv", %{
+      "type" => "kv",
+      "options" => %{"version" => "1"}
+    })
+
     :ok
   end
 
@@ -134,7 +158,10 @@ defmodule Mix.Tasks.Bao.Openapi do
       {:ok, %{"paths" => paths} = spec} when map_size(paths) > 0 ->
         # Pretty-printed, because the whole point is to read the diff. A
         # single-line JSON blob changes entirely whenever anything moves.
-        Jason.encode!(spec, pretty: true)
+        # And sorted, for the same reason: a map with more than 32 keys has
+        # no stable order, so one more mounted engine reshuffled the whole
+        # file and buried the change that mattered.
+        spec |> sorted() |> Jason.encode!(pretty: true)
 
       {:ok, _empty} ->
         Mix.raise("""
@@ -149,6 +176,17 @@ defmodule Mix.Tasks.Bao.Openapi do
         Mix.raise("could not read the specification: #{Exception.message(error)}")
     end
   end
+
+  @doc false
+  def sorted(%{} = map) do
+    map
+    |> Enum.sort_by(fn {key, _value} -> key end)
+    |> Enum.map(fn {key, value} -> {key, sorted(value)} end)
+    |> Jason.OrderedObject.new()
+  end
+
+  def sorted(list) when is_list(list), do: Enum.map(list, &sorted/1)
+  def sorted(value), do: value
 
   defp count(spec) do
     spec |> Jason.decode!() |> Map.get("paths", %{}) |> map_size()

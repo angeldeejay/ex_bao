@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### The rest of the API
+
+* **Every built-in engine and auth method, generated** from OpenBao 2.6.2's
+  OpenAPI specification: 761 operations across `ExBao.Sys`,
+  `ExBao.Identity`, `ExBao.KV`, `ExBao.KV.V1`, `ExBao.PKI`, `ExBao.SSH`,
+  `ExBao.TOTP`, `ExBao.Database`, `ExBao.RabbitMQ`, `ExBao.Kubernetes`,
+  `ExBao.LDAP`, `ExBao.Cubbyhole`, the rest of `ExBao.Transit`, and
+  `ExBao.Auth.Token`, `.AppRole`, `.Cert`, `.JWT`, `.Kerberos`,
+  `.Kubernetes`, `.LDAP`, `.Radius` and `.Userpass`. One function per
+  endpoint; unknown or missing options raise `ArgumentError` before sending.
+* `mix bao.gen` writes them. Curated functions sit above a marked block in
+  the same module and carry `@operation`; the generator never touches them.
+* A coverage test fails when any operation in the newest captured
+  specification is covered by nothing.
+* `mix bao.openapi` mounts every built-in before capturing, so the
+  specification describes the whole API rather than what happened to be
+  mounted, and writes its keys sorted so a new release diffs line by line.
+
 ### Changed
 
 * `ExBao.TokenServer` answers `kind: :no_token` when it has no token to hand
@@ -44,6 +62,11 @@
 * `:references` of a different length than the values raises
   `ArgumentError`. It used to drop the values without a reference.
 * Transit key names and AppRole role names are escaped into the URL.
+
+* Integration test names are unique across runs, and Transit test keys are
+  really deleted. Against a server that outlives the suite, a run used to
+  inherit the previous run's keys — already rotated — which made the
+  minimum-version test pass or fail by chance.
 
 ### Removed
 

@@ -79,13 +79,16 @@ defmodule ExBao.Client do
   def with_token(%__MODULE__{} = client, token), do: %{client | token: token}
 
   @doc false
-  @spec request(t(), atom(), String.t(), map() | nil) ::
-          {:ok, map() | nil} | {:error, Error.t()}
-  def request(%__MODULE__{} = client, method, path, body \\ nil) do
+  @spec request(t(), atom(), String.t(), map() | nil, [{String.t(), String.t()}]) ::
+          {:ok, map() | String.t() | nil} | {:error, Error.t()}
+  def request(%__MODULE__{} = client, method, path, body \\ nil, extra_headers \\ []) do
     [
       method: method,
       url: url(client, path),
-      headers: headers(client),
+      # Extra headers first, so a `content-type` given here survives: Req
+      # only adds its JSON one when none is set, and a KV patch has to say
+      # `application/merge-patch+json`.
+      headers: extra_headers ++ headers(client),
       json: body
     ]
     |> Keyword.merge(client.options)

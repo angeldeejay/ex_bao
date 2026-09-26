@@ -11,6 +11,11 @@ defmodule ExBao do
     * `ExBao.Client` — where the server is. A value, not a process.
     * `ExBao.Error` — what went wrong, in a shape you can match on.
 
+  Everything else OpenBao ships built in is generated from its own OpenAPI
+  specification, one module per engine: `ExBao.KV`, `ExBao.PKI`,
+  `ExBao.Sys`, `ExBao.Auth.Userpass` and the rest. Same first argument, same
+  errors; the options are the endpoint's own fields.
+
   ## The short version
 
       # in your supervision tree

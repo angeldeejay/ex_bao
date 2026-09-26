@@ -23,8 +23,9 @@ defmodule ExBao.MixProject do
 
       # Hex
       description:
-        "An OpenBao client for Elixir: Transit, AppRole and a supervised token " <>
-          "that renews itself before it expires.",
+        "An OpenBao client for Elixir: the whole API, generated from OpenBao's own " <>
+          "specification, with Transit and AppRole designed on top and a supervised " <>
+          "token that renews itself before it expires.",
       package: package(),
 
       # Docs
@@ -40,6 +41,8 @@ defmodule ExBao.MixProject do
         # It starts a container to ask it something, so it needs the test
         # dependencies. Declared here so nobody has to type MIX_ENV.
         "bao.openapi": :test,
+        # Lives next to it in test/support, so it is never in the package.
+        "bao.gen": :test,
         # `check` ends in `test`, and Mix does not switch environment part
         # way through an alias.
         check: :test,
@@ -105,9 +108,33 @@ defmodule ExBao.MixProject do
       source_ref: "v#{@version}",
       extras: ["README.md", "CHANGELOG.md"],
       groups_for_modules: [
-        Transit: [ExBao.Transit],
-        Auth: [ExBao.Auth, ExBao.Auth.AppRole, ExBao.TokenServer],
-        Core: [ExBao.Client, ExBao.Error]
+        Core: [ExBao.Client, ExBao.Error, ExBao.TokenServer],
+        "Secrets engines": [
+          ExBao.Transit,
+          ExBao.KV,
+          ExBao.KV.V1,
+          ExBao.PKI,
+          ExBao.SSH,
+          ExBao.TOTP,
+          ExBao.Database,
+          ExBao.RabbitMQ,
+          ExBao.Kubernetes,
+          ExBao.LDAP,
+          ExBao.Cubbyhole
+        ],
+        "Auth methods": [
+          ExBao.Auth,
+          ExBao.Auth.AppRole,
+          ExBao.Auth.Token,
+          ExBao.Auth.Cert,
+          ExBao.Auth.JWT,
+          ExBao.Auth.Kerberos,
+          ExBao.Auth.Kubernetes,
+          ExBao.Auth.LDAP,
+          ExBao.Auth.Radius,
+          ExBao.Auth.Userpass
+        ],
+        System: [ExBao.Sys, ExBao.Identity]
       ]
     ]
   end
